@@ -1,4 +1,5 @@
 from utils_geo import haversine_km
+from typing import Dict
 
 
 def choisir_meilleure_ambulance(etat_ambulances, appel):
@@ -29,26 +30,55 @@ def choisir_meilleure_ambulance(etat_ambulances, appel):
     return meilleure_amb, meilleure_dist
 
 
-def choisir_meilleur_hopital(etat_hopitaux, appel):
+def choisir_meilleur_hopital(
+    etat_hopitaux: Dict,
+    appel: Dict,
+    max_distance_km: float = 50.0,
+    w_distance: float = 0.6,
+    w_saturation: float = 0.4,
+):
     """
-    V1 simple :
-    - si on a des hôpitaux => choisir celui avec le plus de lits disponibles
-      (capacite_totale - lits_occupees)
-    - sinon => None
+    Choisit l'hôpital en combinant :
+    - distance hôpital ↔ patient
+    - saturation = lits_occupees / capacite_totale
+
+    Score = w_distance * distance_norm + w_saturation * saturation
+
+    Retourne TOUJOURS un triple :
+      (hopital_dict or None, distance_km or None, saturation or None)
     """
     if not etat_hopitaux:
-        return None
+        return None, None, None
 
-    meilleur = None
-    meilleur_dispo = None
+    lat_pat = appel["latitude"]
+    lon_pat = appel["longitude"]
+
+    meilleur_hop = None
+    meilleur_score = None
+    meilleur_dist = None
+    meilleur_sat = None
 
     for hop in etat_hopitaux.values():
         capacite = hop.get("capacite_totale", 0)
         occ = hop.get("lits_occupees", 0)
-        dispo = capacite - occ
+        if capacite <= 0:
+            continue
 
-        if meilleur_dispo is None or dispo > meilleur_dispo:
-            meilleur_dispo = dispo
-            meilleur = hop
+        saturation = occ / capacite 
 
-    return meilleur
+        dist_km = haversine_km(lat_pat, lon_pat, hop["latitude"], hop["longitude"])
+        distance_norm = min(dist_km / max_distance_km, 1.0)
+
+        score = w_distance * distance_norm + w_saturation * saturation
+
+        if meilleur_score is None or score < meilleur_score:
+            meilleur_score = score
+            meilleur_hop = hop
+            meilleur_dist = dist_km
+            meilleur_sat = saturation
+
+    if meilleur_hop is None:
+        return None, None, None
+
+    return meilleur_hop, meilleur_dist, meilleur_sat
+

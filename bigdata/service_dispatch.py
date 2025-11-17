@@ -1,5 +1,3 @@
-
-
 import json
 from datetime import datetime, timezone
 
@@ -12,7 +10,6 @@ from config import (
     TOPIC_APPELS,
     TOPIC_DISPATCH,
 )
-from utils_geo import haversine_km
 from dispatch_logic import (
     choisir_meilleure_ambulance,
     choisir_meilleur_hopital,
@@ -21,59 +18,6 @@ from dispatch_logic import (
 
 def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def choisir_meilleure_ambulance(etat_ambulances, appel):
-    """
-    Choisit l'ambulance disponible la plus proche du lieu de l'appel.
-    etat_ambulances : dict[id_ambulance -> dict]
-    appel : dict
-    """
-    if not etat_ambulances:
-        return None, None 
-
-    lat_pat = appel["latitude"]
-    lon_pat = appel["longitude"]
-
-    meilleure_amb = None
-    meilleure_dist = None
-
-    for amb in etat_ambulances.values():
-        if amb.get("statut") not in ("disponible", "en_route"):
-            continue  
-
-        dist = haversine_km(lat_pat, lon_pat, amb["latitude"], amb["longitude"])
-
-        if meilleure_dist is None or dist < meilleure_dist:
-            meilleure_dist = dist
-            meilleure_amb = amb
-
-    return meilleure_amb, meilleure_dist
-
-
-def choisir_meilleur_hopital(etat_hopitaux, appel):
-    """
-    V1 simple :
-    - si on a des hôpitaux => choisir celui avec le plus de lits disponibles
-      (capacite_totale - lits_occupees)
-    - sinon => None
-    """
-    if not etat_hopitaux:
-        return None
-
-    meilleur = None
-    meilleur_dispo = None
-
-    for hop in etat_hopitaux.values():
-        capacite = hop.get("capacite_totale", 0)
-        occ = hop.get("lits_occupees", 0)
-        dispo = capacite - occ
-
-        if meilleur_dispo is None or dispo > meilleur_dispo:
-            meilleur_dispo = dispo
-            meilleur = hop
-
-    return meilleur
 
 
 def main():
@@ -98,8 +42,9 @@ def main():
         value_serializer=lambda v: json.dumps(v).encode("utf-8"),
     )
 
-    etat_ambulances = {}  
-    etat_hopitaux = {} 
+    # états courants
+    etat_ambulances = {}  # id_ambulance -> dict
+    etat_hopitaux = {}    # id_hopital -> dict
 
     print("[INFO] Service de dispatch en écoute... (Ctrl+C pour arrêter)")
 
@@ -111,32 +56,31 @@ def main():
             if topic == TOPIC_AMBULANCES:
                 amb_id = data["id_ambulance"]
                 etat_ambulances[amb_id] = data
-            
+
             elif topic == TOPIC_HOPITAUX:
                 hop_id = data["id_hopital"]
                 etat_hopitaux[hop_id] = data
 
             elif topic == TOPIC_APPELS:
                 appel = data
-                print(f"[APPEL] Reçu appel {appel['id_appel']} à {appel['ville']} motif={appel['motif_appel']}")
+                print(f"[APPEL] {appel['id_appel']} à {appel['ville']} motif={appel['motif_appel']}")
 
                 # 1) choisir ambulance
-                meilleure_amb, dist_km = choisir_meilleure_ambulance(etat_ambulances, appel)
+                meilleure_amb, dist_amb_km = choisir_meilleure_ambulance(etat_ambulances, appel)
 
                 if meilleure_amb is None:
                     print("[WARN] Aucun ambulance disponible pour cet appel.")
                     continue
 
-                # 2) choisir hôpital (si dispo)
-                meilleur_hop = choisir_meilleur_hopital(etat_hopitaux, appel)
+                # 2) choisir hôpital en combinant distance + saturation
+                meilleur_hop, dist_hop_km, saturation = choisir_meilleur_hopital(etat_hopitaux, appel)
 
-                # 3) estimer le temps d'arrivée 
-                if dist_km is not None:
-                    temps_estime_min = dist_km / 40.0 * 60.0
-                else:
-                    temps_estime_min = None
+                # 3) temps estimé (très simple : 40 km/h)
+                temps_amb_min = dist_amb_km / 40.0 * 60.0 if dist_amb_km is not None else None
+                temps_hop_min = dist_hop_km / 40.0 * 60.0 if dist_hop_km is not None else None
 
                 dispatch_event = {
+                    # infos appel
                     "id_appel": appel["id_appel"],
                     "ville_appel": appel["ville"],
                     "latitude_appel": appel["latitude"],
@@ -145,15 +89,20 @@ def main():
                     "gravite": appel["gravite"],
                     "source_appel": appel["source_appel"],
 
+                    # ambulance choisie
                     "id_ambulance": meilleure_amb["id_ambulance"],
                     "code_ambulance": meilleure_amb["code_ambulance"],
                     "ville_ambulance": meilleure_amb["ville"],
-                    "distance_km": dist_km,
-                    "temps_estime_min": temps_estime_min,
+                    "distance_ambulance_km": dist_amb_km,
+                    "temps_ambulance_estime_min": temps_amb_min,
 
+                    # hôpital choisi (peut être None si Membre 2 n'a pas encore branché hopitaux)
                     "id_hopital": meilleur_hop["id_hopital"] if meilleur_hop else None,
                     "nom_hopital": meilleur_hop["nom_hopital"] if meilleur_hop else None,
                     "ville_hopital": meilleur_hop["ville"] if meilleur_hop else None,
+                    "distance_hopital_km": dist_hop_km,
+                    "saturation_hopital": saturation,
+                    "temps_hopital_estime_min": temps_hop_min,
 
                     "timestamp_dispatch": now_iso(),
                 }
