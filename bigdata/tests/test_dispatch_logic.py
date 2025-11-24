@@ -4,7 +4,7 @@ import unittest
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from dispatch_logic import (
+from logic.dispatch_logic import (
     choisir_meilleure_ambulance,
     choisir_meilleur_hopital,
 )

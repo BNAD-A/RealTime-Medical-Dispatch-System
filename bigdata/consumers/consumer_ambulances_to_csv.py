@@ -14,12 +14,13 @@ from kafka import KafkaConsumer
 from config import KAFKA_BOOTSTRAP_SERVERS, TOPIC_AMBULANCES
 
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
+# On remonte d’un niveau : /bigdata
+ROOT_DIR = Path(__file__).resolve().parents[1]
 
-AMB_RAW_DIR = ROOT_DIR / "data" / "raw" / "ambulances"
+AMB_RAW_DIR = ROOT_DIR / "data" / "raw" 
 AMB_RAW_DIR.mkdir(parents=True, exist_ok=True)
 
-CSV_PATH = AMB_RAW_DIR / "ambulances_stream.csv"
+CSV_PATH = AMB_RAW_DIR / "ambulances_raw.csv"
 
 
 
