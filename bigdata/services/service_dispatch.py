@@ -1,149 +1,160 @@
-import os, sys
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(BASE_DIR)
-
-
-
 import json
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import List, Dict
 
-from kafka import KafkaConsumer, KafkaProducer
+import pandas as pd
+from kafka import KafkaProducer, KafkaConsumer
 
-from config import (
-    KAFKA_BOOTSTRAP_SERVERS,
-    TOPIC_AMBULANCES,
-    TOPIC_HOPITAUX,
-    TOPIC_APPELS,
-    TOPIC_DISPATCH,
-)
 from logic.dispatch_logic import (
     choisir_meilleure_ambulance,
     choisir_meilleur_hopital,
+    construire_evenement_dispatch,
 )
 
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+DATA_STRUCTURED_DIR = BASE_DIR / "data" / "structured"
+
+AMBULANCES_FILE = DATA_STRUCTURED_DIR / "ambulances_clean.csv"
+HOPITAUX_FILE = DATA_STRUCTURED_DIR / "hopitaux_structured.csv"
+
+KAFKA_BOOTSTRAP_SERVERS = ["localhost:9092"]
+TOPIC_APPELS = "appels"
+TOPIC_DISPATCH = "dispatch"
+GROUP_ID = "service_dispatch"
 
 
-def now_iso():
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+# ---------------------------------------------------------------------------
+# Utils chargement données
+# ---------------------------------------------------------------------------
+
+def charger_ambulances() -> List[Dict]:
+    if not AMBULANCES_FILE.exists():
+        print(f"[WARN] Fichier ambulances introuvable : {AMBULANCES_FILE}")
+        return []
+    df = pd.read_csv(AMBULANCES_FILE)
+    return df.to_dict(orient="records")
 
 
-# petit compteur en mémoire pour générer des id_dispatch uniques
-counter_dispatch = 1
+def charger_hopitaux() -> List[Dict]:
+    if not HOPITAUX_FILE.exists():
+        print(f"[WARN] Fichier hôpitaux introuvable : {HOPITAUX_FILE}")
+        return []
+    df = pd.read_csv(HOPITAUX_FILE)
+    return df.to_dict(orient="records")
 
 
-def generate_id_dispatch():
-    global counter_dispatch
-    today = datetime.now().strftime("%Y%m%d")
-    dispatch_id = f"D{today}{counter_dispatch:04d}"
-    counter_dispatch += 1
-    return dispatch_id
-
-
-def priorite_depuis_gravite(gravite: int) -> str:
+def generer_id_dispatch() -> str:
     """
-    gravite 3 -> 'haute'
-    gravite 2 -> 'moyenne'
-    gravite 1 -> 'basse'
+    Génère un identifiant de dispatch du type DYYYYMMDDHHMMSSXXXX
     """
-    if gravite >= 3:
-        return "haute"
-    elif gravite == 2:
-        return "moyenne"
-    return "basse"
+    now = datetime.now(timezone.utc)
+    return "D" + now.strftime("%Y%m%d%H%M%S%f")[:18]
 
 
-def main():
-    print("[INFO] Démarrage du service de dispatch...")
-    print(f"[INFO] Kafka : {KAFKA_BOOTSTRAP_SERVERS}")
-    print(f"[INFO] Topics lus : {TOPIC_AMBULANCES}, {TOPIC_HOPITAUX}, {TOPIC_APPELS}")
-    print(f"[INFO] Topic écrit : {TOPIC_DISPATCH}")
+# ---------------------------------------------------------------------------
+# Service principal
+# ---------------------------------------------------------------------------
 
-    consumer = KafkaConsumer(
-        TOPIC_AMBULANCES,
-        TOPIC_HOPITAUX,
-        TOPIC_APPELS,
-        bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-        value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-        auto_offset_reset="earliest",
-        enable_auto_commit=True,
-        group_id="service-dispatch",
-    )
+def run_service_dispatch() -> None:
+    print("========== SERVICE DISPATCH ==========")
+    print(f"[INFO] BASE_DIR            : {BASE_DIR}")
+    print(f"[INFO] Fichier ambulances  : {AMBULANCES_FILE}")
+    print(f"[INFO] Fichier hopitaux    : {HOPITAUX_FILE}")
+    print(f"[INFO] Kafka bootstrap     : {KAFKA_BOOTSTRAP_SERVERS}")
+    print(f"[INFO] Topic appels        : {TOPIC_APPELS}")
+    print(f"[INFO] Topic dispatch      : {TOPIC_DISPATCH}")
+    print("======================================")
 
     producer = KafkaProducer(
         bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
         value_serializer=lambda v: json.dumps(v).encode("utf-8"),
     )
 
-    # états courants en mémoire
-    etat_ambulances = {}  # id_ambulance -> dict
-    etat_hopitaux = {}    # id_hopital -> dict
+    consumer = KafkaConsumer(
+        TOPIC_APPELS,
+        bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+        value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+        auto_offset_reset="latest",
+        enable_auto_commit=True,
+        group_id=GROUP_ID,
+    )
 
-    print("[INFO] Service de dispatch en écoute... (Ctrl+C pour arrêter)")
+    print("[INFO] Service dispatch en écoute sur le topic 'appels'...")
 
     try:
-        for message in consumer:
-            topic = message.topic
-            data = message.value
+        for msg in consumer:
+            appel = msg.value
 
-            if topic == TOPIC_AMBULANCES:
-                amb_id = data["id_ambulance"]
-                etat_ambulances[amb_id] = data
+            id_appel = (
+                appel.get("id_appel")
+                or appel.get("id")
+                or appel.get("id_appel_urgences")
+            )
+            motif = appel.get("motif") or appel.get("motif_appel")
+            ville = appel.get("ville_patient") or appel.get("ville")
 
-            elif topic == TOPIC_HOPITAUX:
-                hop_id = data["id_hopital"]
-                etat_hopitaux[hop_id] = data
+            print(
+                f"\n[APPEL] Réception appel={id_appel} "
+                f"ville={ville} motif={motif}"
+            )
 
-            elif topic == TOPIC_APPELS:
-                appel = data
-                print(f"[APPEL] {appel['id_appel']} à {appel['ville']} motif={appel['motif_appel']}")
+            # Charger les états actuels
+            ambulances = charger_ambulances()
+            hopitaux = charger_hopitaux()
 
-                # 1) choisir l’ambulance
-                meilleure_amb, dist_amb_km = choisir_meilleure_ambulance(etat_ambulances, appel)
-                if meilleure_amb is None:
-                    print("[WARN] Aucune ambulance disponible pour cet appel.")
-                    continue
+            # Sélection ambulance / hôpital
+            meilleure_amb = choisir_meilleure_ambulance(appel, ambulances)
+            meilleur_hop = choisir_meilleur_hopital(appel, hopitaux)
 
-                # 2) choisir l’hôpital
-                meilleur_hop, dist_hop_km, saturation = choisir_meilleur_hopital(etat_hopitaux, appel)
+            if meilleure_amb:
+                print(
+                    f"[CHOIX] Ambulance={meilleure_amb.get('id_ambulance') or meilleure_amb.get('id')} "
+                    f"dist={meilleure_amb.get('distance_ambulance_km'):.2f} km"
+                )
+            else:
+                print("[CHOIX] Aucune ambulance disponible")
 
-                # on prend comme distance principale la distance patient → hôpital
-                distance_km = dist_hop_km if dist_hop_km is not None else dist_amb_km
+            if meilleur_hop:
+                print(
+                    f"[CHOIX] Hopital={meilleur_hop.get('id_hopital') or meilleur_hop.get('id')} "
+                    f"dist={meilleur_hop.get('distance_hopital_km'):.2f} km "
+                    f"saturation={meilleur_hop.get('taux_saturation_hopital'):.2f}"
+                )
+            else:
+                print("[CHOIX] Aucun hôpital disponible (ou trop saturé)")
 
-                # temps estimé très simple : vitesse 40 km/h
-                temps_estime_min = None
-                if distance_km is not None:
-                    temps_estime_min = distance_km / 40.0 * 60.0  # en minutes
+            # Construction et envoi de l'événement dispatch
+            id_dispatch = generer_id_dispatch()
+            event = construire_evenement_dispatch(
+                id_dispatch=id_dispatch,
+                appel=appel,
+                ambulance=meilleure_amb,
+                hopital=meilleur_hop,
+            )
 
-                priorite = priorite_depuis_gravite(appel.get("gravite", 1))
+            producer.send(TOPIC_DISPATCH, event)
+            producer.flush()
 
-                dispatch_event = {
-                    "id_dispatch": generate_id_dispatch(),
-                    "id_appel": appel["id_appel"],
-                    "motif_appel": appel["motif_appel"],
-                    "latitude_patient": appel["latitude"],
-                    "longitude_patient": appel["longitude"],
-                    "id_ambulance": meilleure_amb["id_ambulance"],
-                    "id_hopital": meilleur_hop["id_hopital"] if meilleur_hop else None,
-                    "distance_km": distance_km,
-                    "temps_estime_min": temps_estime_min,
-                    "priorite": priorite,
-                    "taux_saturation_hopital": saturation,
-                    "zone_intervention": meilleure_amb.get("zone"),
-                    "timestamp": now_iso(),
-                }
-
-                producer.send(TOPIC_DISPATCH, value=dispatch_event)
-                producer.flush()
-
-                print(f"[DISPATCH] {dispatch_event}")
+            print(
+                f"[DISPATCH] Envoyé -> {id_dispatch} | "
+                f"appel={event.get('id_appel')} | "
+                f"amb={event.get('id_ambulance')} | "
+                f"hop={event.get('id_hopital')}"
+            )
 
     except KeyboardInterrupt:
-        print("\n[INFO] Arrêt du service de dispatch (Ctrl+C).")
+        print("\n[INFO] Arrêt du service dispatch (Ctrl+C)")
+
     finally:
         consumer.close()
         producer.close()
-        print("[INFO] Dispatch service fermé.")
+        print("[INFO] Service dispatch arrêté proprement.")
 
 
 if __name__ == "__main__":
-    main()
+    run_service_dispatch()

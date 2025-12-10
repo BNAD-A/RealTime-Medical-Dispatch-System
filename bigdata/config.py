@@ -3,7 +3,7 @@ KAFKA_BOOTSTRAP_SERVERS = ["localhost:9092"]
 TOPIC_AMBULANCES = "ambulances"
 TOPIC_HOPITAUX = "hopitaux"
 TOPIC_DISPATCH = "dispatch"
-TOPIC_APPELS = "appels_urgence"
+TOPIC_APPELS = "appels"
 
 N_AMBULANCES = 50
 

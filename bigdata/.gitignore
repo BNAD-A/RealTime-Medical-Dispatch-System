@@ -1,0 +1,11 @@
+﻿__pycache__/
+*.pyc
+venv/
+airflow/venv/
+.env
+data/raw/*.csv
+data/structured/*.csv
+*.log
+.vscode/
+.idea/
+kafka-logs/
