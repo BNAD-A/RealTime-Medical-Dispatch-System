@@ -2,8 +2,6 @@
 
 Ce document explique étape par étape comment lancer **RESCUE STREAM** sur un environnement **Windows (Kafka + scripts Python)** et **WSL/Ubuntu (Airflow)**.
 
-> ✅ Objectif : générer les flux temps réel (Kafka), produire les CSV, puis exécuter les traitements orchestrés (Airflow).
-
 ---
 
 ## Pré-requis
