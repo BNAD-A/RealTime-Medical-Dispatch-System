@@ -3,7 +3,6 @@ import random
 import os
 from datetime import datetime, timezone
 
-# Configuration
 OUTPUT_FILE = "data/structured/ambulances_clean.csv"
 VILLES_CIBLES = [
     {"ville": "Casablanca", "lat": 33.5731, "lon": -7.5898},
@@ -25,7 +24,6 @@ def main():
     data = []
     id_counter = 1
     
-    # On crée 15 ambulances PAR VILLE pour garantir la disponibilité locale
     for v in VILLES_CIBLES:
         for i in range(15):
             amb = {
@@ -33,10 +31,9 @@ def main():
                 "code_ambulance": f"AMB-{id_counter:03d}",
                 "plaque_immatriculation": f"{random.randint(1000,9999)}-A-{random.randint(1,99)}",
                 "ville": v["ville"],
-                # On les place aléatoirement dans un rayon de ~3-5km du centre
                 "latitude": v["lat"] + random.uniform(-0.03, 0.03),
                 "longitude": v["lon"] + random.uniform(-0.03, 0.03),
-                "statut": "disponible",  # FORCE DISPONIBLE
+                "statut": "disponible", 
                 "vitesse_kmh": 0.0,
                 "zone": "Centre",
                 "carburant_pourcent": 100,
@@ -46,10 +43,8 @@ def main():
             data.append(amb)
             id_counter += 1
 
-    # Création du dossier si nécessaire
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
     
-    # Sauvegarde CSV
     df = pd.DataFrame(data)
     df.to_csv(OUTPUT_FILE, index=False)
     

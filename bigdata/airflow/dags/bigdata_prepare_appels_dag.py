@@ -5,14 +5,12 @@ import sys
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
-# === Chemin projet ===
 THIS_FILE = Path(__file__).resolve()
-PROJECT_ROOT = THIS_FILE.parents[2]  # .../Urgences/bigdata
+PROJECT_ROOT = THIS_FILE.parents[2]
 
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-# Import du script de nettoyage
 from prepare_structured_appels import main as prepare_appels  # noqa: E402
 
 

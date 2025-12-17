@@ -12,9 +12,6 @@ from logic.dispatch_logic import (
     construire_evenement_dispatch,
 )
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_STRUCTURED_DIR = BASE_DIR / "data" / "structured"
@@ -25,12 +22,8 @@ HOPITAUX_FILE = DATA_STRUCTURED_DIR / "hopitaux_structured.csv"
 KAFKA_BOOTSTRAP_SERVERS = ["localhost:9092"]
 TOPIC_APPELS = "appels"
 TOPIC_DISPATCH = "dispatch"
-GROUP_ID = "service_dispatch"
+GROUP_ID = "dispatch_groupe_FINAL_1"
 
-
-# ---------------------------------------------------------------------------
-# Utils chargement données
-# ---------------------------------------------------------------------------
 
 def charger_ambulances() -> List[Dict]:
     if not AMBULANCES_FILE.exists():
@@ -55,10 +48,6 @@ def generer_id_dispatch() -> str:
     now = datetime.now(timezone.utc)
     return "D" + now.strftime("%Y%m%d%H%M%S%f")[:18]
 
-
-# ---------------------------------------------------------------------------
-# Service principal
-# ---------------------------------------------------------------------------
 
 def run_service_dispatch() -> None:
     print("========== SERVICE DISPATCH ==========")
@@ -103,11 +92,9 @@ def run_service_dispatch() -> None:
                 f"ville={ville} motif={motif}"
             )
 
-            # Charger les états actuels
             ambulances = charger_ambulances()
             hopitaux = charger_hopitaux()
 
-            # Sélection ambulance / hôpital
             meilleure_amb = choisir_meilleure_ambulance(appel, ambulances)
             meilleur_hop = choisir_meilleur_hopital(appel, hopitaux)
 
@@ -128,7 +115,6 @@ def run_service_dispatch() -> None:
             else:
                 print("[CHOIX] Aucun hôpital disponible (ou trop saturé)")
 
-            # Construction et envoi de l'événement dispatch
             id_dispatch = generer_id_dispatch()
             event = construire_evenement_dispatch(
                 id_dispatch=id_dispatch,

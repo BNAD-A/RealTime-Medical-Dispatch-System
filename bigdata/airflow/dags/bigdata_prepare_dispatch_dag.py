@@ -11,8 +11,7 @@ PROJECT_ROOT = THIS_FILE.parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from prepare_structured_dispatch import main as prepare_dispatch  # noqa: E402
-
+from prepare_structured_dispatch import main as prepare_dispatch  
 
 default_args = {
     "owner": "airflow",
